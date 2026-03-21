@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minesweeper Chess</title>
+    <style>
+        @font-face {
+            font-family: 'MineSweeperFont';
+            src: url('mine-sweeper.otf.woff2') format('woff2');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+        body {
+            display: flex; flex-direction: column; align-items: center;
+            font-family: Arial, sans-serif; background-color: #008080;
+            color: white; margin: 0; padding: 20px;
+        }
+        #info { margin-bottom: 10px; font-size: 1.2rem; }
+        #board {
+            display: grid;
+            grid-template-columns: repeat(8, 50px);
+            grid-template-rows: repeat(16, 50px);
+            border: 4px solid #B0B0B0;
+            /* box-shadow: 0 10px 20px rgba(0,0,0,0.5); */
+        }
+        .cell {
+            width: 50px; height: 50px;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 30px; cursor: pointer; user-select: none; position: relative;
+        }
+        
+        /* chess piece starting areas top/bot */
+        .cell.light { background-color: #B0B0B0; }
+        .cell.light:nth-child(even) { background-color: #C4C4C4; }
+        .cell.dark { background-color: #C4C4C4; }
+        .cell.dark:nth-child(even) { background-color: #B0B0B0; }
+        
+        /* middle sec covered */
+        .cell.light.mine-zone, .cell.dark.mine-zone { background-color: #C6C6C6; box-sizing: border-box;
+        border-top: 5px solid #FFFFFF; border-left: 5px solid #FFFFFF; border-bottom: 5px solid #808080; border-right: 5px solid #808080; 
+    }
+        
+        /* middle sec uncovered */
+        .cell.light.revealed { background-color: #B0B0B0; box-sizing: border-box;}
+        .cell.light.revealed:nth-child(even) { background-color: #C4C4C4; box-sizing: border-box;}
+        .cell.dark.revealed { background-color: #C4C4C4; box-sizing: border-box;}
+        .cell.dark.revealed:nth-child(even) { background-color: #B0B0B0; box-sizing: border-box;}
+        
+        .cell.exploded { background-color: #F70000 !important; border: 1px solid #c0392b; }
+        
+        .debug-content { opacity: 0.1; position: absolute; z-index: 0; font-size: 20px; font-weight: bold; pointer-events: none; }
+        .flag { font-family: 'MineSweeperFont', Arial, sans-serif; color: #000000; position: absolute; z-index: 1; font-size: 24px; pointer-events: none; }
+        .piece { position: absolute; z-index: 2;
+            /* text-shadow: 0 2px 4px rgba(0,0,0,0.3); */
+        }
+        .selected { outline: 3px solid #e74c3c; z-index: 3; background-color: rgba(231, 76, 60, 0.4); }
+        
+        .number { font-family: 'MineSweeperFont', Arial, sans-serif; font-size: 20px; font-weight: bold; position: absolute; z-index: 1; pointer-events: none; }
+        .number.corner { top: 2px; left: 4px; font-size: 14px; }
+        
+        .c-1 { color: #0100FF; } .c-2 { color: #057D08; } .c-3 { color: #FF0006; } .c-4 { color: #7F027C; }
+        .c-5 { color: #840000; } .c-6 { color: #008284; } .c-7 { color: #840084; } .c-8 { color: #757575; }
+    </style>
+</head>
+<body>
+
+    <div id="info">Connecting...</div>
+    <div id="board"></div>
+
+    <script>
+        const boardEl = document.getElementById('board');
+        const infoEl = document.getElementById('info');
+        const ws = new WebSocket('ws://localhost:8080');
+
+        let myColor = null;
+        let currentTurn = 'white';
+        let selectedPiece = null;
+
+        const pieceIcons = {
+            'white': { 'K': '♔', 'Q': '♕', 'R': '♖', 'B': '♗', 'N': '♘', 'P': '♙' },
+            'black': { 'K': '♚', 'Q': '♛', 'R': '♜', 'B': '♝', 'N': '♞', 'P': '♟' }
+        };
+
+        for (let y = 0; y < 16; y++) {
+            for (let x = 0; x < 8; x++) {
+                const cell = document.createElement('div');
+                cell.className = `cell ${(x + y) % 2 === 0 ? 'light' : 'dark'}`;
+                if (y >= 2 && y <= 13) cell.classList.add('mine-zone'); 
+                cell.dataset.x = x; cell.dataset.y = y;
+                
+                cell.addEventListener('click', () => handleCellClick(x, y));
+                cell.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    handleFlagClick(x, y);
+                });
+                boardEl.appendChild(cell);
+            }
+        }
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            // Handle Explosion Popups
+            if (data.type === 'EXPLOSION') {
+                setTimeout(() => alert(data.message), 50); // delay to allow render
+                return;
+            }
+
+            if (data.type === 'STATE_UPDATE') {
+                myColor = data.color;
+                currentTurn = data.turn;
+                
+                const turnText = currentTurn === myColor ? "(Your Turn)" : "(Waiting...)";
+                infoEl.innerText = `You are ${myColor.toUpperCase()} ${turnText}`;
+                
+                renderBoard(data.pieces, data.grid, data.truthGrid, data.flags);
+            }
+        };
+
+        function handleFlagClick(x, y) {
+            if (myColor === 'white' || myColor === 'black') {
+                ws.send(JSON.stringify({ type: 'FLAG', x: x, y: y }));
+            }
+        }
+
+        function handleCellClick(x, y) {
+            if (selectedPiece && currentTurn === myColor) {
+                ws.send(JSON.stringify({ type: 'MOVE', id: selectedPiece, toX: x, toY: y }));
+                selectedPiece = null;
+            }
+        }
+
+        function getCell(x, y) { return document.querySelector(`.cell[data-x='${x}'][data-y='${y}']`); }
+
+        function renderBoard(pieces, visibleGrid, truthGrid, flags) {
+            document.querySelectorAll('.cell').forEach(cell => {
+                cell.innerHTML = '';
+                cell.className = `cell ${(cell.dataset.x + cell.dataset.y) % 2 === 0 ? 'light' : 'dark'}`;
+                if (cell.dataset.y >= 2 && cell.dataset.y <= 13) cell.classList.add('mine-zone'); 
+            });
+
+            for (let y = 2; y <= 13; y++) {
+                for (let x = 0; x < 8; x++) {
+                    const cell = getCell(x, y);
+                    const cellValue = visibleGrid[y][x];
+                    const isRevealed = cellValue !== null;
+                    const hasPiece = pieces.some(p => p.x === x && p.y === y);
+
+                    // debug truth
+                    if (truthGrid && truthGrid[y] && !isRevealed) {
+                        const truth = truthGrid[y][x];
+                        const debugSpan = document.createElement('span');
+                        debugSpan.className = 'debug-content ' + (truth === 'M' ? '' : 'c-' + truth);
+                        debugSpan.innerText = truth === 'M' ? '💣' : (truth > 0 ? truth : '');
+                        cell.appendChild(debugSpan);
+                    }
+
+                    if (isRevealed) {
+                        cell.classList.remove('mine-zone');
+                        
+                        if (cellValue === 'X') {
+                            // bomb exploded here
+                            cell.classList.add('exploded');
+                            const span = document.createElement('span');
+                            span.className = 'number';
+                            span.innerText = '💣';
+                            cell.appendChild(span);
+                        } else {
+                            // safe number
+                            cell.classList.add('revealed');
+                            if (cellValue > 0) {
+                                const span = document.createElement('span');
+                                span.className = `number c-${cellValue}`;
+                                // iif a piece is here, move number to corner
+                                if (hasPiece) span.classList.add('corner');
+                                span.innerText = cellValue;
+                                cell.appendChild(span);
+                            }
+                        }
+                    } else if (flags && flags[y] && flags[y][x]) {
+                        const flagSpan = document.createElement('span');
+                        flagSpan.className = 'flag';
+                        flagSpan.innerText = '`';
+                        cell.appendChild(flagSpan);
+                    }
+                }
+            }
+
+            pieces.forEach(p => {
+                const cell = getCell(p.x, p.y);
+                const pieceDiv = document.createElement('div');
+                pieceDiv.className = 'piece';
+                pieceDiv.innerText = pieceIcons[p.color][p.type];
+                pieceDiv.style.color = p.color === 'white' ? '#fff' : '#000';
+                if (selectedPiece === p.id) pieceDiv.classList.add('selected');
+                
+                pieceDiv.addEventListener('click', (e) => {
+                    if (p.color === myColor && currentTurn === myColor) {
+                        e.stopPropagation(); 
+                        selectedPiece = p.id;
+                        renderBoard(pieces, visibleGrid, truthGrid, flags); 
+                    }
+                });
+                cell.appendChild(pieceDiv);
+            });
+        }
+    </script>
+</body>
+</html>
