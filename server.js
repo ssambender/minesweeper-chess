@@ -11,6 +11,8 @@ let gameState = {
     players: { white: null, black: null },
     turn: 'white',
     pieces: initializeChessPieces(),
+    deadPieces: { white: [], black: [] },
+    winner: null, 
     mines: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
     revealedWhite: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
     revealedBlack: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
@@ -23,13 +25,25 @@ let gameState = {
 
 function initializeChessPieces() {
     const pieces = [];
-    const backRow = ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'];
+    const backRowBlack = ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'];
     for (let c = 0; c < 8; c++) {
         pieces.push({ id: `b-p-${c}`, type: 'P', color: 'black', x: c, y: 1 });
-        pieces.push({ id: `b-${c}`, type: backRow[c], color: 'black', x: c, y: 0 });
-        pieces.push({ id: `w-p-${c}`, type: 'P', color: 'white', x: c, y: 14 });
-        pieces.push({ id: `w-${c}`, type: backRow[c], color: 'white', x: c, y: 15 });
+        pieces.push({ id: `b-${c}`, type: backRowBlack[c], color: 'black', x: c, y: 0 });
     }
+    
+    pieces.push({ id: 'w-r-0', type: 'R', color: 'white', x: 0, y: 15 });
+    pieces.push({ id: 'w-n-0', type: 'N', color: 'white', x: 1, y: 15 });
+    pieces.push({ id: 'w-b-0', type: 'B', color: 'white', x: 2, y: 15 });
+    pieces.push({ id: 'w-k',   type: 'K', color: 'white', x: 3, y: 15 }); 
+    pieces.push({ id: 'w-q',   type: 'Q', color: 'white', x: 4, y: 15 }); 
+    pieces.push({ id: 'w-b-1', type: 'B', color: 'white', x: 5, y: 15 });
+    pieces.push({ id: 'w-n-1', type: 'N', color: 'white', x: 6, y: 15 });
+    pieces.push({ id: 'w-r-1', type: 'R', color: 'white', x: 7, y: 15 });
+    
+    for (let c = 0; c < 8; c++) {
+        pieces.push({ id: `w-p-${c}`, type: 'P', color: 'white', x: c, y: 14 });
+    }
+    
     return pieces;
 }
 
@@ -70,7 +84,6 @@ function isValidMove(piece, toX, toY, pieces) {
 }
 
 function isProtected(x, y, safeSpots) {
-    // keep a 3x3 grid around the starting move clear of mines
     for (let safe of safeSpots) {
         if (Math.abs(x - safe.x) <= 1 && Math.abs(y - safe.y) <= 1) return true;
     }
@@ -83,9 +96,7 @@ function generateMines(safeW, safeB) {
     while (placed < MINES_COUNT) {
         let x = Math.floor(Math.random() * COLS);
         let y = Math.floor(Math.random() * 12) + 2; 
-        
-        if (isProtected(x, y, safeSpots)) continue; // ensure zero-start
-        
+        if (isProtected(x, y, safeSpots)) continue; 
         if (!gameState.mines[y][x]) {
             gameState.mines[y][x] = true;
             placed++;
@@ -109,17 +120,9 @@ function getAdjacentMines(x, y) {
 
 function floodFill(x, y, color) {
     const revealedState = color === 'white' ? gameState.revealedWhite : gameState.revealedBlack;
-    
-    // stop if out of bounds (only flood fill the mine zone)
     if (y < 2 || y > 13 || x < 0 || x >= COLS) return;
-    
-    // stop if already revealed or exploded
     if (revealedState[y][x]) return;
-    
-    // reveal space
     revealedState[y][x] = true;
-
-    // if zero, recurse to all 8 adjacent neighbors
     if (getAdjacentMines(x, y) === 0) {
         for (let dy = -1; dy <= 1; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
@@ -148,11 +151,21 @@ function broadcastState() {
                 type: 'STATE_UPDATE',
                 turn: gameState.turn,
                 pieces: gameState.pieces,
+                deadPieces: gameState.deadPieces, 
+                winner: gameState.winner,
                 color: color,
                 grid: visibleGrid,
                 truthGrid: truthGrid,
                 flags: flags
             }));
+        }
+    });
+}
+
+function broadcastGameOver(winner, reason) {
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'GAME_OVER', winner, reason }));
         }
     });
 }
@@ -164,6 +177,8 @@ wss.on('connection', (ws) => {
 
     ws.on('message', (message) => {
         const data = JSON.parse(message);
+        
+        if (gameState.winner) return;
         
         if (data.type === 'FLAG' && ws.color !== 'spectator') {
             const { x, y } = data;
@@ -178,36 +193,64 @@ wss.on('connection', (ws) => {
 
         if (data.type === 'MOVE' && ws.color === gameState.turn) {
             const { id, toX, toY } = data;
-            const pieceIndex = gameState.pieces.findIndex(p => p.id === id);
-            if (pieceIndex === -1) return;
             
-            const piece = gameState.pieces[pieceIndex];
-            if (!isValidMove(piece, toX, toY, gameState.pieces)) return;
+            const movingPiece = gameState.pieces.find(p => p.id === id);
+            if (!movingPiece) return;
+            
+            if (!isValidMove(movingPiece, toX, toY, gameState.pieces)) return;
 
-            gameState.pieces = gameState.pieces.filter(p => !(p.x === toX && p.y === toY));
-            gameState.pieces[pieceIndex].x = toX;
-            gameState.pieces[pieceIndex].y = toY;
+            // capture validation and win check
+            const targetPiece = gameState.pieces.find(p => p.x === toX && p.y === toY);
+            if (targetPiece) {
+                // add piece to graveyard
+                gameState.deadPieces[targetPiece.color].push(targetPiece);
+                
+                // remove piece by id
+                gameState.pieces = gameState.pieces.filter(p => p.id !== targetPiece.id);
 
+                if (targetPiece.type === 'K') {
+                    gameState.winner = ws.color; 
+                    broadcastGameOver(ws.color, `${pieceNames[targetPiece.type]} was captured!`);
+                }
+            }
+
+            movingPiece.x = toX;
+            movingPiece.y = toY;
+
+            // first move
             if (toY >= 2 && toY <= 13) {
                 if (ws.color === 'white' && !gameState.firstMoveWhite) gameState.firstMoveWhite = {x: toX, y: toY};
                 if (ws.color === 'black' && !gameState.firstMoveBlack) gameState.firstMoveBlack = {x: toX, y: toY};
             }
 
+            // board generation
             if (!gameState.minesGenerated && gameState.firstMoveWhite && gameState.firstMoveBlack) {
                 generateMines(gameState.firstMoveWhite, gameState.firstMoveBlack);
-                // trigger flood fill for both initial placements simultaneously
                 floodFill(gameState.firstMoveWhite.x, gameState.firstMoveWhite.y, 'white');
                 floodFill(gameState.firstMoveBlack.x, gameState.firstMoveBlack.y, 'black');
             }
 
+            // explosion and win check
             if (gameState.minesGenerated && toY >= 2 && toY <= 13) {
                 if (gameState.mines[toY][toX]) {
-                    gameState.pieces = gameState.pieces.filter(p => p.id !== id);
+                    
+                    // add piece to graveyard
+                    gameState.deadPieces[movingPiece.color].push(movingPiece);
+                    
+                    // remove piece from board
+                    gameState.pieces = gameState.pieces.filter(p => p.id !== movingPiece.id);
+                    
                     if (ws.color === 'white') gameState.revealedWhite[toY][toX] = 'X';
                     if (ws.color === 'black') gameState.revealedBlack[toY][toX] = 'X';
-                    ws.send(JSON.stringify({ type: 'EXPLOSION', message: `Your ${pieceNames[piece.type]} exploded!` }));
+                    
+                    ws.send(JSON.stringify({ type: 'EXPLOSION', message: `Your ${pieceNames[movingPiece.type]} exploded!` }));
+
+                    if (movingPiece.type === 'K') {
+                        gameState.winner = ws.color === 'white' ? 'black' : 'white';
+                        broadcastGameOver(gameState.winner, `${ws.color}'s King exploded on a mine!`);
+                    }
+
                 } else {
-                    // safe move triggers flood fill
                     floodFill(toX, toY, ws.color);
                 }
             }
