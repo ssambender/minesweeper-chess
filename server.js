@@ -7,21 +7,29 @@ const MINES_COUNT = 20;
 
 const pieceNames = { 'P': 'Pawn', 'R': 'Rook', 'N': 'Knight', 'B': 'Bishop', 'Q': 'Queen', 'K': 'King' };
 
-let gameState = {
-    players: { white: null, black: null },
-    turn: 'white',
-    pieces: initializeChessPieces(),
-    deadPieces: { white: [], black: [] },
-    winner: null, 
-    mines: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
-    revealedWhite: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
-    revealedBlack: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
-    flagsWhite: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
-    flagsBlack: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
-    firstMoveWhite: null,
-    firstMoveBlack: null,
-    minesGenerated: false
-};
+let timerInterval = null;
+let timeRemaining = 600; // 10 minutes in seconds
+
+let gameState = getInitialGameState();
+
+function getInitialGameState() {
+    return {
+        players: { white: null, black: null },
+        turn: 'white',
+        pieces: initializeChessPieces(),
+        deadPieces: { white: [], black: [] },
+        winner: null, 
+        mines: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
+        revealedWhite: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
+        revealedBlack: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
+        flagsWhite: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
+        flagsBlack: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
+        firstMoveWhite: null,
+        firstMoveBlack: null,
+        minesGenerated: false,
+        gameStarted: false // NEW: Tracks if both players have joined
+    };
+}
 
 function initializeChessPieces() {
     const pieces = [];
@@ -132,10 +140,28 @@ function floodFill(x, y, color) {
     }
 }
 
+// --- NEW: Reset Game Logic ---
+function resetGame() {
+    if (timerInterval) clearInterval(timerInterval);
+    timeRemaining = 600;
+    
+    gameState = getInitialGameState();
+
+    wss.clients.forEach(client => {
+        client.color = null; // Strip everyone of their roles
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'RESET_LOBBY' }));
+        }
+    });
+    
+    broadcastState();
+}
+
 function broadcastState() {
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
-            const color = client.color;
+            // Null color means they are unassigned in the lobby
+            const color = client.color || 'none';
             const revealedState = color === 'white' ? gameState.revealedWhite : gameState.revealedBlack;
             const flags = color === 'white' ? gameState.flagsWhite : gameState.flagsBlack;
             
@@ -156,13 +182,20 @@ function broadcastState() {
                 color: color,
                 grid: visibleGrid,
                 truthGrid: truthGrid,
-                flags: flags
+                flags: flags,
+                gameStarted: gameState.gameStarted,
+                timeRemaining: timeRemaining,
+                seats: {
+                    white: gameState.players.white !== null,
+                    black: gameState.players.black !== null
+                }
             }));
         }
     });
 }
 
 function broadcastGameOver(winner, reason) {
+    if (timerInterval) clearInterval(timerInterval);
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify({ type: 'GAME_OVER', winner, reason }));
@@ -171,16 +204,70 @@ function broadcastGameOver(winner, reason) {
 }
 
 wss.on('connection', (ws) => {
-    if (!gameState.players.white) { ws.color = 'white'; gameState.players.white = ws; } 
-    else if (!gameState.players.black) { ws.color = 'black'; gameState.players.black = ws; } 
-    else { ws.color = 'spectator'; }
+    ws.color = null; // Default to unassigned
+
+    ws.on('close', () => {
+        if (ws.color === 'white') gameState.players.white = null;
+        if (ws.color === 'black') gameState.players.black = null;
+        
+        // If both players leave, wipe the server state
+        if (!gameState.players.white && !gameState.players.black) {
+            resetGame();
+        } else {
+            broadcastState();
+        }
+    });
 
     ws.on('message', (message) => {
         const data = JSON.parse(message);
         
-        if (gameState.winner) return;
+        // --- End Game Trigger ---
+        if (data.type === 'END_GAME') {
+            resetGame();
+            return;
+        }
+
+        // --- Lobby Join Logic ---
+        if (data.type === 'JOIN') {
+            const requestedColor = data.color;
+            if (requestedColor === 'white' || requestedColor === 'black') {
+                if (gameState.players[requestedColor] === null) {
+                    ws.color = requestedColor;
+                    gameState.players[requestedColor] = ws;
+                    ws.send(JSON.stringify({ type: 'JOIN_SUCCESS', color: requestedColor }));
+                    
+                    // --- Start Game Timer if both joined ---
+                    if (!gameState.gameStarted && gameState.players.white && gameState.players.black) {
+                        gameState.gameStarted = true;
+                        timeRemaining = 600;
+                        
+                        timerInterval = setInterval(() => {
+                            timeRemaining--;
+                            wss.clients.forEach(c => {
+                                if (c.readyState === WebSocket.OPEN) {
+                                    c.send(JSON.stringify({ type: 'TIME_UPDATE', time: timeRemaining }));
+                                }
+                            });
+
+                            if (timeRemaining <= 0) {
+                                clearInterval(timerInterval);
+                                gameState.winner = 'draw';
+                                broadcastGameOver('draw', 'Time ran out!');
+                            }
+                        }, 1000);
+                    }
+                    
+                    broadcastState(); 
+                } else {
+                    ws.send(JSON.stringify({ type: 'ERROR', message: 'Seat already taken!' }));
+                }
+            }
+            return;
+        }
+
+        if (gameState.winner || !gameState.gameStarted) return; // Prevent moves before game starts
         
-        if (data.type === 'FLAG' && ws.color !== 'spectator') {
+        if (data.type === 'FLAG' && ws.color !== 'none') {
             const { x, y } = data;
             const hasPiece = gameState.pieces.some(p => p.x === x && p.y === y);
             if (!hasPiece && y >= 2 && y <= 13) {
@@ -202,10 +289,7 @@ wss.on('connection', (ws) => {
             // capture validation and win check
             const targetPiece = gameState.pieces.find(p => p.x === toX && p.y === toY);
             if (targetPiece) {
-                // add piece to graveyard
                 gameState.deadPieces[targetPiece.color].push(targetPiece);
-                
-                // remove piece by id
                 gameState.pieces = gameState.pieces.filter(p => p.id !== targetPiece.id);
 
                 if (targetPiece.type === 'K') {
@@ -233,11 +317,7 @@ wss.on('connection', (ws) => {
             // explosion and win check
             if (gameState.minesGenerated && toY >= 2 && toY <= 13) {
                 if (gameState.mines[toY][toX]) {
-                    
-                    // add piece to graveyard
                     gameState.deadPieces[movingPiece.color].push(movingPiece);
-                    
-                    // remove piece from board
                     gameState.pieces = gameState.pieces.filter(p => p.id !== movingPiece.id);
                     
                     if (ws.color === 'white') gameState.revealedWhite[toY][toX] = 'X';
@@ -260,6 +340,7 @@ wss.on('connection', (ws) => {
         }
     });
 
+    // Send initial state to let the UI know what seats are open
     broadcastState();
 });
 

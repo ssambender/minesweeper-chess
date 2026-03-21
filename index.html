@@ -14,9 +14,8 @@
         }
 
         :root {
-            --cell-light: #C4C4C4;  /* #e3c599 */  /* #EBECD0 */
-            --cell-dark: #B0B0B0;   /* #cfaf89 */  /* #8eae6a */
-            
+            --cell-light: #C4C4C4;  
+            --cell-dark: #B0B0B0;   
             --cover-light: #ffffff;
             --cover-dark: #808080;
         }
@@ -26,24 +25,12 @@
             font-family: Arial, sans-serif;
             background-color: #ffffff;
             color: white; margin: 0; padding: 20px;
-            /* background-color: #889ba4; */
         }
         
-        #info { margin-bottom: 10px; font-size: 1.2rem; color: var(--cell-dark); text-align: center; }
+        #info { font-size: 1.2rem; color: var(--cell-dark); text-align: center; }
         
-        .turn-active {
-            color: #a7d170;
-            font-weight: bold;
-            opacity: 0.8;
-            display: inline-block;
-        }
-        
-        .turn-waiting {
-            color: #d38e70;
-            opacity: 0.8;
-            font-style: italic;
-            animation: pulse-fade 2s infinite ease;
-        }
+        .turn-active { color: #a7d170; font-weight: bold; opacity: 0.8; display: inline-block; }
+        .turn-waiting { color: #d38e70; opacity: 0.8; font-style: italic; animation: pulse-fade 2s infinite ease; }
         
         @keyframes pulse-fade {
             0% { opacity: 0.1; }
@@ -52,6 +39,74 @@
             100% { opacity: 0.1; }
         }
 
+        /* --- Custom Themed Popup Overlay --- */
+        #custom-popup {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: var(--cell-light);
+            color: #000000;
+            border: 4px solid;
+            border-top-color: var(--cover-light);
+            border-left-color: var(--cover-light);
+            border-bottom-color: var(--cover-dark);
+            border-right-color: var(--cover-dark);
+            padding: 15px 30px;
+            font-family: 'MineSweeperFont', Arial, sans-serif;
+            font-size: 1.2rem;
+            z-index: 1000;
+            box-shadow: 0 15px 30px rgba(0,0,0,0.5);
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, top 0.3s ease;
+            text-align: center;
+            pointer-events: none; 
+            white-space: pre-line; 
+        }
+        #custom-popup.show {
+            opacity: 1;
+            visibility: visible;
+            top: 40px; 
+        }
+
+        #lobby-overlay {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            background-color: var(--cell-light);
+            border: 4px solid var(--cell-dark);
+            padding: 40px; border-radius: 8px; margin-top: 20px;
+            color: black;
+        }
+        .btn-styled {
+            font-family: 'MineSweeperFont', Arial, sans-serif;
+            padding: 15px 30px; margin: 10px; font-size: 1.2rem; cursor: pointer;
+            border: 4px solid; border-top-color: var(--cover-light); border-left-color: var(--cover-light);
+            border-bottom-color: var(--cover-dark); border-right-color: var(--cover-dark);
+            background-color: var(--cell-light); color: black;
+        }
+        .btn-styled:active {
+            border-top-color: var(--cover-dark); border-left-color: var(--cover-dark);
+            border-bottom-color: var(--cover-light); border-right-color: var(--cover-light);
+        }
+        .btn-styled:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Game UI */
+        #game-container {
+            display: none; /* Safely hidden by default */
+            width: 100%;
+            flex-direction: column;
+            align-items: center;
+        }
+        #game-header {
+            display: flex; justify-content: space-between; align-items: center;
+            width: 100%; max-width: 650px; margin-bottom: 15px;
+        }
+        #timer {
+            font-family: 'MineSweeperFont', Arial, sans-serif;
+            font-size: 2rem; color: #F70000;
+            background: #000; padding: 5px 15px; border: 3px solid var(--cover-dark);
+        }
+        
         .main-wrapper {
             display: flex; gap: 48px; align-items: flex-start; justify-content: center;
         }
@@ -67,23 +122,12 @@
             text-align: center; margin-top: 0; font-size: 1.1rem; 
             border-bottom: 2px solid var(--cover-dark); padding-bottom: 10px; margin-bottom: 10px;
         }
-        .dead-pieces-container {
-            display: flex; flex-wrap: wrap; gap: 5px; font-size: 30px;
-        }
+        .dead-pieces-container { display: flex; flex-wrap: wrap; gap: 5px; font-size: 30px; }
         .dead-piece { text-shadow: 0 1px 2px rgba(0,0,0,0.3); }
 
-        #board {
-            display: grid;
-            grid-template-columns: repeat(8, 50px);
-            grid-template-rows: repeat(16, 50px);
-            border: 4px solid var(--cell-light);
-        }
+        #board { display: grid; grid-template-columns: repeat(8, 50px); grid-template-rows: repeat(16, 50px); border: 4px solid var(--cell-light); }
         
-        .cell {
-            width: 50px; height: 50px;
-            display: flex; justify-content: center; align-items: center;
-            font-size: 30px; cursor: pointer; user-select: none; position: relative;
-        }
+        .cell { width: 50px; height: 50px; display: flex; justify-content: center; align-items: center; font-size: 30px; cursor: pointer; user-select: none; position: relative; }
         
         .cell.light { background-color: var(--cell-light); }
         .cell.light:nth-child(even) { background-color: var(--cell-dark); }
@@ -98,87 +142,117 @@
         .cell.dark.revealed { background-color: var(--cell-dark); box-sizing: border-box;}
         .cell.dark.revealed:nth-child(even) { background-color: var(--cell-light); box-sizing: border-box;}
         
-        .cell.exploded { background-color: #F70000 !important; border: 1px solid #c0392b; }
+        .cell.exploded { background-color: #F70000 !important; }
         
         .debug-content { opacity: 0; position: absolute; z-index: 0; font-size: 20px; font-weight: bold; pointer-events: none; }
         .flag { font-family: 'MineSweeperFont', Arial, sans-serif; color: #000000; position: absolute; z-index: 1; font-size: 24px; pointer-events: none; }
         .piece { position: absolute; z-index: 2; }
         .selected { outline: 3px solid #e7c53c; z-index: 3; background-color: rgba(231, 205, 60, 0.3); }
         
-        /* Move Indicators */
-        .valid-move-dot {
-            position: absolute; width: 16px; height: 16px;
-            background-color: rgba(0, 0, 0, 0.25); border-radius: 50%;
-            z-index: 3; pointer-events: none;
-        }
-        .valid-capture-ring {
-            position: absolute; width: 44px; height: 44px;
-            border: 6px solid rgba(0, 0, 0, 0.25); border-radius: 50%;
-            box-sizing: border-box; z-index: 3; pointer-events: none;
-        }
+        .valid-move-dot { position: absolute; width: 16px; height: 16px; background-color: rgba(0, 0, 0, 0.25); border-radius: 50%; z-index: 3; pointer-events: none; }
+        .valid-capture-ring { position: absolute; width: 44px; height: 44px; border: 6px solid rgba(0, 0, 0, 0.25); border-radius: 50%; box-sizing: border-box; z-index: 3; pointer-events: none; }
         
         .number { font-family: 'MineSweeperFont', Arial, sans-serif; font-size: 20px; font-weight: bold; position: absolute; z-index: 1; pointer-events: none; }
         .number.corner { top: 2px; left: 4px; font-size: 14px; }
         
         .c-1 { color: #0100FF; } .c-2 { color: #057D08; } .c-3 { color: #FF0006; } .c-4 { color: #7F027C; }
         .c-5 { color: #840000; } .c-6 { color: #008284; } .c-7 { color: #840084; } .c-8 { color: #757575; }
+
+
+        footer a {
+            text-decoration: none;
+            color: var(--cell-light);
+            z-index: -10;
+        }
+        footer a:hover {
+            color: var(--cell-dark);
+        }
     </style>
 </head>
 <body>
 
+    <div id="custom-popup"></div>
+
     <div style="padding: 24px 0 10px 0;">
         <h1 style="font-family: 'MineSweeperFont', Arial, sans-serif; font-size: 2rem; text-align: center; margin: 0 0 10px 0; color: var(--cell-dark); ">Minesweeper Chess</h1>
-        <div style="text-align: center;">
-            <select id="theme-switch" style="padding: 5px; font-size: 1rem; border-radius: 4px; cursor: pointer; border: 1px solid #B0B0B0;">
-                <option value="minesweeper">Minesweeper Theme</option>
-                <option value="chess">Chess Theme</option>
-                <option value="green">Green Theme</option>
-            </select>
+    </div>
+
+    <div id="lobby-overlay">
+        <h2>Select Your Team</h2>
+        <button id="btn-white" class="btn-styled">Play as WHITE</button>
+        <button id="btn-black" class="btn-styled">Play as BLACK</button>
+    </div>
+
+    <div id="game-container">
+        
+        <div id="game-header">
+            <div id="timer">10:00</div>
+            <div id="info">Connecting...</div>
+            <button id="btn-end-game" class="btn-styled" style="padding: 10px 20px; font-size: 1rem; margin: 0;">End Game</button>
+        </div>
+        
+        <div class="main-wrapper">
+            <div class="graveyard" id="white-graveyard">
+                <h3 style="color: white;">White Captured</h3>
+                <div class="dead-pieces-container"></div>
+            </div>
+
+            <div id="board"></div>
+
+            <div class="graveyard" id="black-graveyard">
+                <h3 style="color: black;">Black Captured</h3>
+                <div class="dead-pieces-container"></div>
+            </div>
         </div>
     </div>
 
-    <div id="info">Connecting...</div>
-
-    <div class="main-wrapper">
-        <div class="graveyard" id="white-graveyard">
-            <h3 style="color: white;">White Lost</h3>
-            <div class="dead-pieces-container"></div>
-        </div>
-
-        <div id="board"></div>
-
-        <div class="graveyard" id="black-graveyard">
-            <h3 style="color: black;">Black Lost</h3>
-            <div class="dead-pieces-container"></div>
-        </div>
+    <div style="text-align: center; margin-top: 42px;">
+        <select id="theme-switch" style="padding: 5px; font-size: 1rem; border-radius: 4px; cursor: pointer; border: 1px solid #B0B0B0;">
+            <option value="minesweeper">Minesweeper Theme</option>
+            <option value="chess">Chess Theme</option>
+            <option value="green">Green Theme</option>
+        </select>
     </div>
+
+    <footer style="position: absolute; bottom: 1rem; font-family: Arial, sans-serif; font-size: 1rem;"><a href="https://sambender.net" target="_blank">Sam Bender 2026</a></footer>
 
     <script>
+        // Custom Popup Logic
+        let popupTimeout;
+        function showPopup(message, duration = 3500) {
+            const popup = document.getElementById('custom-popup');
+            popup.innerText = message;
+            popup.classList.add('show');
+            
+            clearTimeout(popupTimeout);
+            if (duration > 0) {
+                popupTimeout = setTimeout(() => {
+                    popup.classList.remove('show');
+                }, duration);
+            }
+        }
+
         // theme switcher logic
         document.getElementById('theme-switch').addEventListener('change', (e) => {
             const theme = e.target.value;
             if (theme === 'minesweeper') {
                 document.documentElement.style.setProperty('--cell-light', '#C4C4C4');
                 document.documentElement.style.setProperty('--cell-dark', '#B0B0B0');
-
                 document.documentElement.style.setProperty('--cover-light', '#ffffff');
                 document.documentElement.style.setProperty('--cover-dark', '#808080');
             } else if (theme === 'chess') {
                 document.documentElement.style.setProperty('--cell-light', '#e3c599');
                 document.documentElement.style.setProperty('--cell-dark', '#cfaf89');
-                
                 document.documentElement.style.setProperty('--cover-light', '#fcefd3');
                 document.documentElement.style.setProperty('--cover-dark', '#b2987a');
             } else if (theme === 'green') {
                 document.documentElement.style.setProperty('--cell-light', '#dfe0b8');
                 document.documentElement.style.setProperty('--cell-dark', '#8eae6a');
-
                 document.documentElement.style.setProperty('--cover-light', '#feffd0');
                 document.documentElement.style.setProperty('--cover-dark', '#769652');
             }
         });
 
-        // client-side move validation for preview indacators
         function isPathClear(startX, startY, endX, endY, pieces) {
             const dx = Math.sign(endX - startX);
             const dy = Math.sign(endY - startY);
@@ -216,17 +290,25 @@
 
         const boardEl = document.getElementById('board');
         const infoEl = document.getElementById('info');
+        const timerEl = document.getElementById('timer');
         const ws = new WebSocket('ws://localhost:8080');
 
         let myColor = null;
         let currentTurn = 'white';
         let selectedPiece = null;
         let isGameOver = false;
+        let inLobby = true;
+        let gameStarted = false;
 
         const pieceIcons = {
             'white': { 'K': '♔', 'Q': '♕', 'R': '♖', 'B': '♗', 'N': '♘', 'P': '♙' },
             'black': { 'K': '♚', 'Q': '♛', 'R': '♜', 'B': '♝', 'N': '♞', 'P': '♟' }
         };
+
+        // Button Events
+        document.getElementById('btn-white').addEventListener('click', () => { ws.send(JSON.stringify({ type: 'JOIN', color: 'white' })); });
+        document.getElementById('btn-black').addEventListener('click', () => { ws.send(JSON.stringify({ type: 'JOIN', color: 'black' })); });
+        document.getElementById('btn-end-game').addEventListener('click', () => { ws.send(JSON.stringify({ type: 'END_GAME' })); });
 
         for (let y = 0; y < 16; y++) {
             for (let x = 0; x < 8; x++) {
@@ -244,37 +326,90 @@
             }
         }
 
+        function updateTimerDisplay(timeSeconds) {
+            const m = Math.floor(timeSeconds / 60).toString().padStart(2, '0');
+            const s = (timeSeconds % 60).toString().padStart(2, '0');
+            timerEl.innerText = `${m}:${s}`;
+        }
+
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             
-            // handle local explosion popup
-            if (data.type === 'EXPLOSION') {
-                setTimeout(() => alert(data.message), 50);
+            // Server wiped the game (someone clicked end game or both disconnected)
+            if (data.type === 'RESET_LOBBY') {
+                inLobby = true;
+                isGameOver = false;
+                gameStarted = false;
+                myColor = null;
+                document.getElementById('lobby-overlay').style.display = 'flex';
+                document.getElementById('game-container').style.display = 'none';
                 return;
             }
 
-            // handle game over broadcast
+            if (data.type === 'TIME_UPDATE') {
+                updateTimerDisplay(data.time);
+                return;
+            }
+
+            if (data.type === 'JOIN_SUCCESS') {
+                inLobby = false;
+                document.getElementById('lobby-overlay').style.display = 'none';
+                document.getElementById('game-container').style.display = 'flex';
+                myColor = data.color;
+                return;
+            }
+
+            if (data.type === 'ERROR') {
+                showPopup(data.message);
+                return;
+            }
+
+            if (data.type === 'EXPLOSION') {
+                showPopup(data.message);
+                return;
+            }
+
             if (data.type === 'GAME_OVER') {
                 isGameOver = true;
-                infoEl.innerText = `GAME OVER! ${data.winner.toUpperCase()} WINS!`;
+                infoEl.innerText = data.winner === 'draw' ? 'TIME UP! IT\'S A DRAW!' : `GAME OVER! ${data.winner.toUpperCase()} WINS!`;
                 infoEl.style.color = '#F70000';
                 infoEl.style.fontWeight = 'bold';
-                setTimeout(() => alert(`Game Over! ${data.winner.toUpperCase()} wins!\nReason: ${data.reason}`), 100);
+                showPopup(`Game Over!\nReason: ${data.reason}`, 6000); // Shows for 6 seconds
                 return;
             }
 
             if (data.type === 'STATE_UPDATE') {
-                myColor = data.color;
                 currentTurn = data.turn;
+                gameStarted = data.gameStarted;
                 
-                if (data.winner) {
-                    isGameOver = true;
-                    infoEl.innerText = `GAME OVER! ${data.winner.toUpperCase()} WINS!`;
-                } else {
-                    if (currentTurn === myColor) {
-                        infoEl.innerHTML = `You are ${myColor.toUpperCase()} TEAM<br><span class="turn-active">YOUR TURN</span>`;
+                if (data.timeRemaining !== undefined) {
+                    updateTimerDisplay(data.timeRemaining);
+                }
+
+                if (inLobby && data.seats) {
+                    const btnWhite = document.getElementById('btn-white');
+                    const btnBlack = document.getElementById('btn-black');
+                    
+                    btnWhite.disabled = data.seats.white;
+                    btnWhite.innerText = data.seats.white ? 'White Taken' : 'Play as WHITE';
+                    
+                    btnBlack.disabled = data.seats.black;
+                    btnBlack.innerText = data.seats.black ? 'Black Taken' : 'Play as BLACK';
+                }
+
+                if (!inLobby) {
+                    infoEl.style.color = 'var(--cell-dark)'; // reset color if it was red from game over
+                    if (data.winner) {
+                        isGameOver = true;
+                        infoEl.innerText = data.winner === 'draw' ? 'TIME UP! IT\'S A DRAW!' : `GAME OVER! ${data.winner.toUpperCase()} WINS!`;
+                    } else if (!gameStarted) {
+                        infoEl.innerHTML = `You are ${myColor.toUpperCase()} TEAM<br><span class="turn-waiting">(Waiting for Player 2...)</span>`;
                     } else {
-                        infoEl.innerHTML = `You are ${myColor.toUpperCase()} TEAM<br><span class="turn-waiting">(Waiting for opponent...)</span>`;
+                        if (currentTurn === myColor) {
+                            infoEl.innerHTML = `You are ${myColor.toUpperCase()} TEAM<br><span class="turn-active">YOUR TURN</span>`;
+                        } else {
+                            infoEl.innerHTML = `You are ${myColor.toUpperCase()} TEAM<br><span class="turn-waiting">(Waiting for opponent...)</span>`;
+                        }
                     }
                 }
                 
@@ -284,14 +419,14 @@
         };
 
         function handleFlagClick(x, y) {
-            if (isGameOver) return;
+            if (isGameOver || inLobby || !gameStarted) return;
             if (myColor === 'white' || myColor === 'black') {
                 ws.send(JSON.stringify({ type: 'FLAG', x: x, y: y }));
             }
         }
 
         function handleCellClick(x, y) {
-            if (isGameOver) return;
+            if (isGameOver || inLobby || !gameStarted) return;
             if (selectedPiece && currentTurn === myColor) {
                 ws.send(JSON.stringify({ type: 'MOVE', id: selectedPiece, toX: x, toY: y }));
                 selectedPiece = null;
@@ -384,7 +519,7 @@
                 if (selectedPiece === p.id) pieceDiv.classList.add('selected');
                 
                 pieceDiv.addEventListener('click', (e) => {
-                    if (isGameOver) return; // prevent selection if game over
+                    if (isGameOver || inLobby || !gameStarted) return; 
                     if (p.color === myColor && currentTurn === myColor) {
                         e.stopPropagation(); 
                         selectedPiece = p.id;
@@ -395,7 +530,7 @@
             });
 
             // draw valid move indicators after rendering pieces
-            if (selectedPiece) {
+            if (selectedPiece && !inLobby && gameStarted) {
                 const selectedObj = pieces.find(p => p.id === selectedPiece);
                 if (selectedObj) {
                     for (let y = 0; y < 16; y++) {
@@ -404,7 +539,6 @@
                                 const cell = getCell(x, y);
                                 const targetPiece = pieces.find(p => p.x === x && p.y === y);
                                 const indicator = document.createElement('div');
-                                //  ring for capture / dot for empty square
                                 indicator.className = targetPiece ? 'valid-capture-ring' : 'valid-move-dot';
                                 cell.appendChild(indicator);
                             }
@@ -416,11 +550,7 @@
 
         function debug(opacity = 0.15) {
             const debugElements = document.querySelectorAll('.debug-content');
-            
-            debugElements.forEach(element => {
-                element.style.opacity = opacity;
-            });
-            
+            debugElements.forEach(element => { element.style.opacity = opacity; });
             console.log(`Debug opacity set to: ${opacity}`);
         }
     </script>
