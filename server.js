@@ -1,5 +1,6 @@
 const WebSocket = require('ws');
-const wss = new WebSocket.Server({ port: 8080 });
+const PORT = process.env.PORT || 8080;
+const wss = new WebSocket.Server({ port: PORT });
 
 const ROWS = 16;
 const COLS = 8;
@@ -22,12 +23,13 @@ function getInitialGameState() {
         mines: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
         revealedWhite: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
         revealedBlack: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
-        flagsWhite: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
-        flagsBlack: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
+        // Flags now initialize to 0 instead of false for the 3-state rotation
+        flagsWhite: Array(ROWS).fill(null).map(() => Array(COLS).fill(0)),
+        flagsBlack: Array(ROWS).fill(null).map(() => Array(COLS).fill(0)),
         firstMoveWhite: null,
         firstMoveBlack: null,
         minesGenerated: false,
-        gameStarted: false // NEW: Tracks if both players have joined
+        gameStarted: false 
     };
 }
 
@@ -55,7 +57,6 @@ function initializeChessPieces() {
     return pieces;
 }
 
-// chess movement validation
 function isPathClear(startX, startY, endX, endY, pieces) {
     const dx = Math.sign(endX - startX);
     const dy = Math.sign(endY - startY);
@@ -140,7 +141,6 @@ function floodFill(x, y, color) {
     }
 }
 
-// --- NEW: Reset Game Logic ---
 function resetGame() {
     if (timerInterval) clearInterval(timerInterval);
     timeRemaining = 600;
@@ -148,7 +148,7 @@ function resetGame() {
     gameState = getInitialGameState();
 
     wss.clients.forEach(client => {
-        client.color = null; // Strip everyone of their roles
+        client.color = null; 
         if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify({ type: 'RESET_LOBBY' }));
         }
@@ -160,7 +160,6 @@ function resetGame() {
 function broadcastState() {
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
-            // Null color means they are unassigned in the lobby
             const color = client.color || 'none';
             const revealedState = color === 'white' ? gameState.revealedWhite : gameState.revealedBlack;
             const flags = color === 'white' ? gameState.flagsWhite : gameState.flagsBlack;
@@ -204,13 +203,12 @@ function broadcastGameOver(winner, reason) {
 }
 
 wss.on('connection', (ws) => {
-    ws.color = null; // Default to unassigned
+    ws.color = null; 
 
     ws.on('close', () => {
         if (ws.color === 'white') gameState.players.white = null;
         if (ws.color === 'black') gameState.players.black = null;
         
-        // If both players leave, wipe the server state
         if (!gameState.players.white && !gameState.players.black) {
             resetGame();
         } else {
@@ -221,13 +219,11 @@ wss.on('connection', (ws) => {
     ws.on('message', (message) => {
         const data = JSON.parse(message);
         
-        // --- End Game Trigger ---
         if (data.type === 'END_GAME') {
             resetGame();
             return;
         }
 
-        // --- Lobby Join Logic ---
         if (data.type === 'JOIN') {
             const requestedColor = data.color;
             if (requestedColor === 'white' || requestedColor === 'black') {
@@ -236,7 +232,6 @@ wss.on('connection', (ws) => {
                     gameState.players[requestedColor] = ws;
                     ws.send(JSON.stringify({ type: 'JOIN_SUCCESS', color: requestedColor }));
                     
-                    // --- Start Game Timer if both joined ---
                     if (!gameState.gameStarted && gameState.players.white && gameState.players.black) {
                         gameState.gameStarted = true;
                         timeRemaining = 600;
@@ -265,14 +260,15 @@ wss.on('connection', (ws) => {
             return;
         }
 
-        if (gameState.winner || !gameState.gameStarted) return; // Prevent moves before game starts
+        if (gameState.winner || !gameState.gameStarted) return; 
         
         if (data.type === 'FLAG' && ws.color !== 'none') {
             const { x, y } = data;
             const hasPiece = gameState.pieces.some(p => p.x === x && p.y === y);
             if (!hasPiece && y >= 2 && y <= 13) {
-                if (ws.color === 'white') gameState.flagsWhite[y][x] = !gameState.flagsWhite[y][x];
-                if (ws.color === 'black') gameState.flagsBlack[y][x] = !gameState.flagsBlack[y][x];
+                // 2 flag colors - Modulo 3 creates the rotation: 0 -> 1 -> 2 -> 0 (no flag - black - green - no flag)
+                if (ws.color === 'white') gameState.flagsWhite[y][x] = (gameState.flagsWhite[y][x] + 1) % 3;
+                if (ws.color === 'black') gameState.flagsBlack[y][x] = (gameState.flagsBlack[y][x] + 1) % 3;
                 broadcastState();
             }
             return;
@@ -286,7 +282,6 @@ wss.on('connection', (ws) => {
             
             if (!isValidMove(movingPiece, toX, toY, gameState.pieces)) return;
 
-            // capture validation and win check
             const targetPiece = gameState.pieces.find(p => p.x === toX && p.y === toY);
             if (targetPiece) {
                 gameState.deadPieces[targetPiece.color].push(targetPiece);
@@ -301,20 +296,17 @@ wss.on('connection', (ws) => {
             movingPiece.x = toX;
             movingPiece.y = toY;
 
-            // first move
             if (toY >= 2 && toY <= 13) {
                 if (ws.color === 'white' && !gameState.firstMoveWhite) gameState.firstMoveWhite = {x: toX, y: toY};
                 if (ws.color === 'black' && !gameState.firstMoveBlack) gameState.firstMoveBlack = {x: toX, y: toY};
             }
 
-            // board generation
             if (!gameState.minesGenerated && gameState.firstMoveWhite && gameState.firstMoveBlack) {
                 generateMines(gameState.firstMoveWhite, gameState.firstMoveBlack);
                 floodFill(gameState.firstMoveWhite.x, gameState.firstMoveWhite.y, 'white');
                 floodFill(gameState.firstMoveBlack.x, gameState.firstMoveBlack.y, 'black');
             }
 
-            // explosion and win check
             if (gameState.minesGenerated && toY >= 2 && toY <= 13) {
                 if (gameState.mines[toY][toX]) {
                     gameState.deadPieces[movingPiece.color].push(movingPiece);
@@ -340,8 +332,7 @@ wss.on('connection', (ws) => {
         }
     });
 
-    // Send initial state to let the UI know what seats are open
     broadcastState();
 });
 
-console.log('WebSocket server running on ws://localhost:8080');
+console.log('WebSocket server running on port ' + PORT);
