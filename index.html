@@ -20,6 +20,14 @@
             --cover-dark: #808080;
         }
 
+        #toggle-dark {
+            color: #212830;
+             opacity: 0.4;
+        }
+        #toggle-dark:hover {
+            opacity: 1;
+        }
+
         body {
             display: flex; flex-direction: column; align-items: center;
             font-family: Arial, sans-serif;
@@ -39,7 +47,7 @@
             100% { opacity: 0.1; }
         }
 
-        /* --- Custom Themed Popup Overlay --- */
+        /* custom popup alert */
         #custom-popup {
             position: fixed;
             top: 10px;
@@ -74,7 +82,7 @@
             display: flex; flex-direction: column; align-items: center; justify-content: center;
             background-color: var(--cell-light);
             border: 4px solid var(--cell-dark);
-            padding: 40px; border-radius: 8px; margin-top: 20px;
+            padding: 40px; margin-top: 20px;
             color: black;
         }
         .btn-styled {
@@ -90,9 +98,9 @@
         }
         .btn-styled:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        /* Game UI */
+        /* game ui */
         #game-container {
-            display: none; /* Safely hidden by default */
+            display: none;
             width: 100%;
             flex-direction: column;
             align-items: center;
@@ -142,7 +150,7 @@
         .cell.dark.revealed { background-color: var(--cell-dark); box-sizing: border-box;}
         .cell.dark.revealed:nth-child(even) { background-color: var(--cell-light); box-sizing: border-box;}
         
-        .cell.exploded { background-color: #F70000 !important; }
+        .cell.exploded { background-color: #F70000 !important; border: 1px solid #c0392b; }
         
         .debug-content { opacity: 0; position: absolute; z-index: 0; font-size: 20px; font-weight: bold; pointer-events: none; }
         .flag { font-family: 'MineSweeperFont', Arial, sans-serif; color: #000000; position: absolute; z-index: 1; font-size: 24px; pointer-events: none; }
@@ -157,7 +165,6 @@
         
         .c-1 { color: #0100FF; } .c-2 { color: #057D08; } .c-3 { color: #FF0006; } .c-4 { color: #7F027C; }
         .c-5 { color: #840000; } .c-6 { color: #008284; } .c-7 { color: #840084; } .c-8 { color: #757575; }
-
 
         footer a {
             text-decoration: none;
@@ -207,18 +214,33 @@
     </div>
 
     <div style="text-align: center; margin-top: 42px;">
-        <select id="theme-switch" style="padding: 5px; font-size: 1rem; border-radius: 4px; cursor: pointer; border: 1px solid #B0B0B0;">
+        <select id="theme-switch" style="padding: 5px; font-size: 1rem; cursor: pointer; border: 1px solid #B0B0B0; color: #888888; background: none;">
             <option value="minesweeper">Minesweeper Theme</option>
             <option value="chess">Chess Theme</option>
             <option value="green">Green Theme</option>
         </select>
     </div>
+    <div id="toggle-dark" style="margin-top: 24px; padding: 4px; cursor: pointer;">Use Dark Mode</div>
 
     <footer style="position: absolute; bottom: 1rem; font-family: Arial, sans-serif; font-size: 1rem;"><a href="https://sambender.net" target="_blank">Sam Bender 2026</a></footer>
 
     <script>
-        // Custom Popup Logic
+        const toggleButton = document.getElementById('toggle-dark');
+
+        toggleButton.addEventListener('click', () => {
+        if (toggleButton.innerText === 'Use Dark Mode') {
+            document.body.style.backgroundColor = '#212830';
+            toggleButton.style.color = '#ffffff'; 
+            toggleButton.innerText = 'Use Light Mode';
+        } else {
+            document.body.style.backgroundColor = '#ffffff';
+            toggleButton.style.color = '#212830'; 
+            toggleButton.innerText = 'Use Dark Mode';
+        }
+        });
+
         let popupTimeout;
+        // duration 0 will keep the popup on screen until refreshed
         function showPopup(message, duration = 3500) {
             const popup = document.getElementById('custom-popup');
             popup.innerText = message;
@@ -291,7 +313,28 @@
         const boardEl = document.getElementById('board');
         const infoEl = document.getElementById('info');
         const timerEl = document.getElementById('timer');
-        const ws = new WebSocket('ws://localhost:8080');
+        
+        const ws = new WebSocket('wss://fashionable-cordy-sambender-1b0d434f.koyeb.app/');
+
+        // connection error hgandling
+        ws.onerror = function(error) {
+            showPopup("Server is not currently running.", 0); // 0 prevents it from fading out
+            
+            // disable lobby buttons and change text
+            const btnWhite = document.getElementById('btn-white');
+            const btnBlack = document.getElementById('btn-black');
+            btnWhite.disabled = true;
+            btnWhite.innerText = 'Server Offline';
+            btnBlack.disabled = true;
+            btnBlack.innerText = 'Server Offline';
+        };
+
+        ws.onclose = function() {
+            // if in the middle of a game and the server drops
+            if (!inLobby) {
+                showPopup("Connection to server lost.", 0);
+            }
+        };
 
         let myColor = null;
         let currentTurn = 'white';
@@ -305,7 +348,7 @@
             'black': { 'K': '♚', 'Q': '♛', 'R': '♜', 'B': '♝', 'N': '♞', 'P': '♟' }
         };
 
-        // Button Events
+        // BUTTON EVENTS
         document.getElementById('btn-white').addEventListener('click', () => { ws.send(JSON.stringify({ type: 'JOIN', color: 'white' })); });
         document.getElementById('btn-black').addEventListener('click', () => { ws.send(JSON.stringify({ type: 'JOIN', color: 'black' })); });
         document.getElementById('btn-end-game').addEventListener('click', () => { ws.send(JSON.stringify({ type: 'END_GAME' })); });
@@ -335,7 +378,6 @@
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             
-            // Server wiped the game (someone clicked end game or both disconnected)
             if (data.type === 'RESET_LOBBY') {
                 inLobby = true;
                 isGameOver = false;
@@ -374,7 +416,7 @@
                 infoEl.innerText = data.winner === 'draw' ? 'TIME UP! IT\'S A DRAW!' : `GAME OVER! ${data.winner.toUpperCase()} WINS!`;
                 infoEl.style.color = '#F70000';
                 infoEl.style.fontWeight = 'bold';
-                showPopup(`Game Over!\nReason: ${data.reason}`, 6000); // Shows for 6 seconds
+                showPopup(`Game Over!\nReason: ${data.reason}`, 6000); 
                 return;
             }
 
@@ -398,7 +440,7 @@
                 }
 
                 if (!inLobby) {
-                    infoEl.style.color = 'var(--cell-dark)'; // reset color if it was red from game over
+                    infoEl.style.color = 'var(--cell-dark)'; 
                     if (data.winner) {
                         isGameOver = true;
                         infoEl.innerText = data.winner === 'draw' ? 'TIME UP! IT\'S A DRAW!' : `GAME OVER! ${data.winner.toUpperCase()} WINS!`;
@@ -502,9 +544,16 @@
                             }
                         }
                     } else if (flags && flags[y] && flags[y][x]) {
+                        const flagVal = flags[y][x];
                         const flagSpan = document.createElement('span');
                         flagSpan.className = 'flag';
                         flagSpan.innerText = '`';
+                        
+                        // make secondary flag green
+                        if (flagVal === 2) {
+                            flagSpan.style.color = '#057D08'; 
+                        }
+
                         cell.appendChild(flagSpan);
                     }
                 }
