@@ -1,7 +1,7 @@
 <br>
 
 <p align="center">
- <img src="https://raw.githubusercontent.com/ssambender/minesweeper-chess/refs/heads/main/favicon.png" alt="Minesweeper Chess Logo" height="165">
+ <img src="https://raw.githubusercontent.com/ssambender/minesweeper-chess-frontend/refs/heads/main/favicon.png" alt="Minesweeper Chess Logo" height="165">
 </p>
 
 <h3 align="center">Minesweeper Chess</h3>
@@ -9,7 +9,12 @@
 <p align="center">
 2 Player chess on a minesweeper board
  <br>
- <a href="https://github.com/ssambender/minesweeper-chess"><strong>Try it Online »</strong></a>
+ <a href="https://ssambender.github.io/minesweeper-chess-frontend/"><strong>Try it Online »</strong></a>
+</p>
+
+___
+<p align="center">
+ <a href="https://github.com/ssambender/minesweeper-chess-frontend">View Frontend Repo</a>
 </p>
 
 ___
