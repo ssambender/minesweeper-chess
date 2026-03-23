@@ -9,7 +9,7 @@ const MINES_COUNT = 20;
 const pieceNames = { 'P': 'Pawn', 'R': 'Rook', 'N': 'Knight', 'B': 'Bishop', 'Q': 'Queen', 'K': 'King' };
 
 let timerInterval = null;
-let timeRemaining = 600; // 10 minutes in seconds
+let timeRemaining = 1200; // 20 minutes in seconds
 
 let gameState = getInitialGameState();
 
@@ -277,6 +277,12 @@ wss.on('connection', (ws) => {
         if (data.type === 'MOVE' && ws.color === gameState.turn) {
             const { id, toX, toY } = data;
             
+            // prevents moving to an already revealed bomb
+            const revealedState = ws.color === 'white' ? gameState.revealedWhite : gameState.revealedBlack;
+            if (toY >= 2 && toY <= 13 && revealedState[toY][toX] === 'X') {
+                return; 
+            }
+
             const movingPiece = gameState.pieces.find(p => p.id === id);
             if (!movingPiece) return;
             
