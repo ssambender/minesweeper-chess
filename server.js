@@ -1,6 +1,16 @@
-const WebSocket = require('ws');
+const http = require('http');
+const { Server } = require('socket.io');
+
 const PORT = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port: PORT });
+const server = http.createServer();
+
+const io = new Server(server, {
+    cors: {
+        origin: "*", 
+        methods: ["GET", "POST"],
+        credentials: true
+    }
+});
 
 const ROWS = 16;
 const COLS = 8;
@@ -8,10 +18,8 @@ const MINES_COUNT = 20;
 
 const pieceNames = { 'P': 'Pawn', 'R': 'Rook', 'N': 'Knight', 'B': 'Bishop', 'Q': 'Queen', 'K': 'King' };
 
-let timerInterval = null;
-let timeRemaining = 1200; // 20 minutes in seconds
-
-let gameState = getInitialGameState();
+// store multiple games mapped by roomCode
+const games = {};
 
 function getInitialGameState() {
     return {
@@ -23,13 +31,14 @@ function getInitialGameState() {
         mines: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
         revealedWhite: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
         revealedBlack: Array(ROWS).fill(null).map(() => Array(COLS).fill(false)),
-        // Flags now initialize to 0 instead of false for the 3-state rotation
         flagsWhite: Array(ROWS).fill(null).map(() => Array(COLS).fill(0)),
         flagsBlack: Array(ROWS).fill(null).map(() => Array(COLS).fill(0)),
         firstMoveWhite: null,
         firstMoveBlack: null,
         minesGenerated: false,
-        gameStarted: false 
+        gameStarted: false,
+        timeRemaining: 1200,
+        timerInterval: null
     };
 }
 
@@ -99,246 +108,297 @@ function isProtected(x, y, safeSpots) {
     return false;
 }
 
-function generateMines(safeW, safeB) {
+function generateMines(gs, safeW, safeB) {
     let placed = 0;
     const safeSpots = [safeW, safeB];
     while (placed < MINES_COUNT) {
         let x = Math.floor(Math.random() * COLS);
         let y = Math.floor(Math.random() * 12) + 2; 
         if (isProtected(x, y, safeSpots)) continue; 
-        if (!gameState.mines[y][x]) {
-            gameState.mines[y][x] = true;
+        if (!gs.mines[y][x]) {
+            gs.mines[y][x] = true;
             placed++;
         }
     }
-    gameState.minesGenerated = true;
+    gs.minesGenerated = true;
 }
 
-function getAdjacentMines(x, y) {
+function getAdjacentMines(gs, x, y) {
     let count = 0;
     for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
             let ny = y + dy, nx = x + dx;
             if (ny >= 2 && ny <= 13 && nx >= 0 && nx < COLS) {
-                if (gameState.mines[ny][nx]) count++;
+                if (gs.mines[ny][nx]) count++;
             }
         }
     }
     return count;
 }
 
-function floodFill(x, y, color) {
-    const revealedState = color === 'white' ? gameState.revealedWhite : gameState.revealedBlack;
+function floodFill(gs, x, y, color) {
+    const revealedState = color === 'white' ? gs.revealedWhite : gs.revealedBlack;
     if (y < 2 || y > 13 || x < 0 || x >= COLS) return;
     if (revealedState[y][x]) return;
     revealedState[y][x] = true;
-    if (getAdjacentMines(x, y) === 0) {
+    if (getAdjacentMines(gs, x, y) === 0) {
         for (let dy = -1; dy <= 1; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
-                if (dx !== 0 || dy !== 0) floodFill(x + dx, y + dy, color);
+                if (dx !== 0 || dy !== 0) floodFill(gs, x + dx, y + dy, color);
             }
         }
     }
 }
 
-function resetGame() {
-    if (timerInterval) clearInterval(timerInterval);
-    timeRemaining = 600;
+function resetGame(roomCode) {
+    const gs = games[roomCode];
+    if (!gs) return;
+
+    if (gs.timerInterval) clearInterval(gs.timerInterval);
     
-    gameState = getInitialGameState();
+    // create new state but maintain players
+    const newGs = getInitialGameState();
+    newGs.players = { white: null, black: null }; // resets colors
+    games[roomCode] = newGs;
 
-    wss.clients.forEach(client => {
-        client.color = null; 
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: 'RESET_LOBBY' }));
+    // remove colors from clients
+    const room = io.sockets.adapter.rooms.get(roomCode);
+    if (room) {
+        for (const clientId of room) {
+            const clientSocket = io.sockets.sockets.get(clientId);
+            if (clientSocket) clientSocket.color = null;
         }
-    });
-    
-    broadcastState();
+    }
+
+    io.to(roomCode).emit('resetLobby');
+    broadcastState(roomCode);
 }
 
-function broadcastState() {
-    wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            const color = client.color || 'none';
-            const revealedState = color === 'white' ? gameState.revealedWhite : gameState.revealedBlack;
-            const flags = color === 'white' ? gameState.flagsWhite : gameState.flagsBlack;
-            
-            const visibleGrid = revealedState.map((row, y) => 
-                row.map((val, x) => val === 'X' ? 'X' : (val === true ? getAdjacentMines(x, y) : null))
-            );
+function broadcastState(roomCode) {
+    const gs = games[roomCode];
+    if (!gs) return;
 
-            const truthGrid = gameState.minesGenerated ? Array(ROWS).fill(null).map((_, y) => 
-                Array(COLS).fill(null).map((_, x) => gameState.mines[y][x] ? 'M' : getAdjacentMines(x, y))
-            ) : null;
+    const room = io.sockets.adapter.rooms.get(roomCode);
+    if (room) {
+        for (const clientId of room) {
+            const clientSocket = io.sockets.sockets.get(clientId);
+            if (clientSocket) {
+                const color = clientSocket.color || 'none';
+                const revealedState = color === 'white' ? gs.revealedWhite : gs.revealedBlack;
+                const flags = color === 'white' ? gs.flagsWhite : gs.flagsBlack;
+                
+                const visibleGrid = revealedState.map((row, y) => 
+                    row.map((val, x) => val === 'X' ? 'X' : (val === true ? getAdjacentMines(gs, x, y) : null))
+                );
 
-            client.send(JSON.stringify({
-                type: 'STATE_UPDATE',
-                turn: gameState.turn,
-                pieces: gameState.pieces,
-                deadPieces: gameState.deadPieces, 
-                winner: gameState.winner,
-                color: color,
-                grid: visibleGrid,
-                truthGrid: truthGrid,
-                flags: flags,
-                gameStarted: gameState.gameStarted,
-                timeRemaining: timeRemaining,
-                seats: {
-                    white: gameState.players.white !== null,
-                    black: gameState.players.black !== null
-                }
-            }));
+                const truthGrid = gs.minesGenerated ? Array(ROWS).fill(null).map((_, y) => 
+                    Array(COLS).fill(null).map((_, x) => gs.mines[y][x] ? 'M' : getAdjacentMines(gs, x, y))
+                ) : null;
+
+                clientSocket.emit('stateUpdate', {
+                    turn: gs.turn,
+                    pieces: gs.pieces,
+                    deadPieces: gs.deadPieces, 
+                    winner: gs.winner,
+                    color: color,
+                    grid: visibleGrid,
+                    truthGrid: truthGrid,
+                    flags: flags,
+                    gameStarted: gs.gameStarted,
+                    timeRemaining: gs.timeRemaining,
+                    seats: {
+                        white: gs.players.white !== null,
+                        black: gs.players.black !== null
+                    }
+                });
+            }
         }
-    });
+    }
 }
 
-function broadcastGameOver(winner, reason) {
-    if (timerInterval) clearInterval(timerInterval);
-    wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: 'GAME_OVER', winner, reason }));
-        }
-    });
+function broadcastGameOver(roomCode, winner, reason) {
+    const gs = games[roomCode];
+    if (gs && gs.timerInterval) clearInterval(gs.timerInterval);
+    io.to(roomCode).emit('gameOver', { winner, reason });
 }
 
-wss.on('connection', (ws) => {
-    ws.color = null; 
+io.on('connection', (socket) => {
+    socket.color = null;
+    socket.roomCode = null;
 
-    ws.on('close', () => {
-        if (ws.color === 'white') gameState.players.white = null;
-        if (ws.color === 'black') gameState.players.black = null;
-        
-        if (!gameState.players.white && !gameState.players.black) {
-            resetGame();
+    // HOST CREATES NEW ROOM
+    socket.on('createRoom', () => {
+        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        let code = '';
+        do {
+            code = '';
+            for (let i = 0; i < 4; i++) {
+                code += characters.charAt(Math.floor(Math.random() * characters.length));
+            }
+        } while (games[code]); // ensure unique room code
+
+        games[code] = getInitialGameState();
+        socket.join(code);
+        socket.roomCode = code;
+        socket.emit('roomCreated', { roomCode: code });
+        broadcastState(code);
+    });
+
+    // PLAYER JOINS ROOM
+    socket.on('joinRoom', ({ roomCode }) => {
+        const code = roomCode.toUpperCase();
+        if (games[code]) {
+            socket.join(code);
+            socket.roomCode = code;
+            socket.emit('joinedRoom', { roomCode: code });
+            broadcastState(code);
         } else {
-            broadcastState();
+            socket.emit('errorMsg', "Room not found!");
         }
     });
 
-    ws.on('message', (message) => {
-        const data = JSON.parse(message);
+    // SELECT TEAM COLOR
+    socket.on('selectColor', ({ color }) => {
+        const code = socket.roomCode;
+        if (!code || !games[code]) return;
         
-        if (data.type === 'END_GAME') {
-            resetGame();
-            return;
-        }
-
-        if (data.type === 'JOIN') {
-            const requestedColor = data.color;
-            if (requestedColor === 'white' || requestedColor === 'black') {
-                if (gameState.players[requestedColor] === null) {
-                    ws.color = requestedColor;
-                    gameState.players[requestedColor] = ws;
-                    ws.send(JSON.stringify({ type: 'JOIN_SUCCESS', color: requestedColor }));
+        const gs = games[code];
+        if (color === 'white' || color === 'black') {
+            if (gs.players[color] === null) {
+                socket.color = color;
+                gs.players[color] = socket.id;
+                socket.emit('joinSuccess', { color });
+                
+                // Start game if both players joined
+                if (!gs.gameStarted && gs.players.white && gs.players.black) {
+                    gs.gameStarted = true;
+                    gs.timeRemaining = 1200;
                     
-                    if (!gameState.gameStarted && gameState.players.white && gameState.players.black) {
-                        gameState.gameStarted = true;
-                        timeRemaining = 600;
-                        
-                        timerInterval = setInterval(() => {
-                            timeRemaining--;
-                            wss.clients.forEach(c => {
-                                if (c.readyState === WebSocket.OPEN) {
-                                    c.send(JSON.stringify({ type: 'TIME_UPDATE', time: timeRemaining }));
-                                }
-                            });
+                    gs.timerInterval = setInterval(() => {
+                        gs.timeRemaining--;
+                        io.to(code).emit('timeUpdate', { time: gs.timeRemaining });
 
-                            if (timeRemaining <= 0) {
-                                clearInterval(timerInterval);
-                                gameState.winner = 'draw';
-                                broadcastGameOver('draw', 'Time ran out!');
-                            }
-                        }, 1000);
-                    }
-                    
-                    broadcastState(); 
-                } else {
-                    ws.send(JSON.stringify({ type: 'ERROR', message: 'Seat already taken!' }));
+                        if (gs.timeRemaining <= 0) {
+                            clearInterval(gs.timerInterval);
+                            gs.winner = 'draw';
+                            broadcastGameOver(code, 'draw', 'Time ran out!');
+                        }
+                    }, 1000);
                 }
+                
+                broadcastState(code); 
+            } else {
+                socket.emit('errorMsg', 'Seat already taken!');
             }
-            return;
-        }
-
-        if (gameState.winner || !gameState.gameStarted) return; 
-        
-        if (data.type === 'FLAG' && ws.color !== 'none') {
-            const { x, y } = data;
-            const hasPiece = gameState.pieces.some(p => p.x === x && p.y === y);
-            if (!hasPiece && y >= 2 && y <= 13) {
-                // 2 flag colors - Modulo 3 creates the rotation: 0 -> 1 -> 2 -> 0 (no flag - black - green - no flag)
-                if (ws.color === 'white') gameState.flagsWhite[y][x] = (gameState.flagsWhite[y][x] + 1) % 3;
-                if (ws.color === 'black') gameState.flagsBlack[y][x] = (gameState.flagsBlack[y][x] + 1) % 3;
-                broadcastState();
-            }
-            return;
-        }
-
-        if (data.type === 'MOVE' && ws.color === gameState.turn) {
-            const { id, toX, toY } = data;
-            
-            // prevents moving to an already revealed bomb
-            const revealedState = ws.color === 'white' ? gameState.revealedWhite : gameState.revealedBlack;
-            if (toY >= 2 && toY <= 13 && revealedState[toY][toX] === 'X') {
-                return; 
-            }
-
-            const movingPiece = gameState.pieces.find(p => p.id === id);
-            if (!movingPiece) return;
-            
-            if (!isValidMove(movingPiece, toX, toY, gameState.pieces)) return;
-
-            const targetPiece = gameState.pieces.find(p => p.x === toX && p.y === toY);
-            if (targetPiece) {
-                gameState.deadPieces[targetPiece.color].push(targetPiece);
-                gameState.pieces = gameState.pieces.filter(p => p.id !== targetPiece.id);
-
-                if (targetPiece.type === 'K') {
-                    gameState.winner = ws.color; 
-                    broadcastGameOver(ws.color, `${pieceNames[targetPiece.type]} was captured!`);
-                }
-            }
-
-            movingPiece.x = toX;
-            movingPiece.y = toY;
-
-            if (toY >= 2 && toY <= 13) {
-                if (ws.color === 'white' && !gameState.firstMoveWhite) gameState.firstMoveWhite = {x: toX, y: toY};
-                if (ws.color === 'black' && !gameState.firstMoveBlack) gameState.firstMoveBlack = {x: toX, y: toY};
-            }
-
-            if (!gameState.minesGenerated && gameState.firstMoveWhite && gameState.firstMoveBlack) {
-                generateMines(gameState.firstMoveWhite, gameState.firstMoveBlack);
-                floodFill(gameState.firstMoveWhite.x, gameState.firstMoveWhite.y, 'white');
-                floodFill(gameState.firstMoveBlack.x, gameState.firstMoveBlack.y, 'black');
-            }
-
-            if (gameState.minesGenerated && toY >= 2 && toY <= 13) {
-                if (gameState.mines[toY][toX]) {
-                    gameState.deadPieces[movingPiece.color].push(movingPiece);
-                    gameState.pieces = gameState.pieces.filter(p => p.id !== movingPiece.id);
-                    
-                    if (ws.color === 'white') gameState.revealedWhite[toY][toX] = 'X';
-                    if (ws.color === 'black') gameState.revealedBlack[toY][toX] = 'X';
-                    
-                    ws.send(JSON.stringify({ type: 'EXPLOSION', message: `Your ${pieceNames[movingPiece.type]} exploded!` }));
-
-                    if (movingPiece.type === 'K') {
-                        gameState.winner = ws.color === 'white' ? 'black' : 'white';
-                        broadcastGameOver(gameState.winner, `${ws.color}'s King exploded on a mine!`);
-                    }
-
-                } else {
-                    floodFill(toX, toY, ws.color);
-                }
-            }
-
-            gameState.turn = gameState.turn === 'white' ? 'black' : 'white';
-            broadcastState();
         }
     });
 
-    broadcastState();
+    socket.on('flag', ({ x, y }) => {
+        const code = socket.roomCode;
+        if (!code || !games[code] || socket.color === 'none') return;
+        
+        const gs = games[code];
+        if (gs.winner || !gs.gameStarted) return;
+
+        const hasPiece = gs.pieces.some(p => p.x === x && p.y === y);
+        if (!hasPiece && y >= 2 && y <= 13) {
+            if (socket.color === 'white') gs.flagsWhite[y][x] = (gs.flagsWhite[y][x] + 1) % 3;
+            if (socket.color === 'black') gs.flagsBlack[y][x] = (gs.flagsBlack[y][x] + 1) % 3;
+            broadcastState(code);
+        }
+    });
+
+    socket.on('move', ({ id, toX, toY }) => {
+        const code = socket.roomCode;
+        if (!code || !games[code] || !socket.color) return;
+
+        const gs = games[code];
+        if (gs.winner || !gs.gameStarted || socket.color !== gs.turn) return;
+        
+        const revealedState = socket.color === 'white' ? gs.revealedWhite : gs.revealedBlack;
+        if (toY >= 2 && toY <= 13 && revealedState[toY][toX] === 'X') {
+            return; 
+        }
+
+        const movingPiece = gs.pieces.find(p => p.id === id);
+        if (!movingPiece) return;
+        
+        if (!isValidMove(movingPiece, toX, toY, gs.pieces)) return;
+
+        const targetPiece = gs.pieces.find(p => p.x === toX && p.y === toY);
+        if (targetPiece) {
+            gs.deadPieces[targetPiece.color].push(targetPiece);
+            gs.pieces = gs.pieces.filter(p => p.id !== targetPiece.id);
+
+            if (targetPiece.type === 'K') {
+                gs.winner = socket.color; 
+                broadcastGameOver(code, socket.color, `${pieceNames[targetPiece.type]} was captured!`);
+            }
+        }
+
+        movingPiece.x = toX;
+        movingPiece.y = toY;
+
+        if (toY >= 2 && toY <= 13) {
+            if (socket.color === 'white' && !gs.firstMoveWhite) gs.firstMoveWhite = {x: toX, y: toY};
+            if (socket.color === 'black' && !gs.firstMoveBlack) gs.firstMoveBlack = {x: toX, y: toY};
+        }
+
+        if (!gs.minesGenerated && gs.firstMoveWhite && gs.firstMoveBlack) {
+            generateMines(gs, gs.firstMoveWhite, gs.firstMoveBlack);
+            floodFill(gs, gs.firstMoveWhite.x, gs.firstMoveWhite.y, 'white');
+            floodFill(gs, gs.firstMoveBlack.x, gs.firstMoveBlack.y, 'black');
+        }
+
+        if (gs.minesGenerated && toY >= 2 && toY <= 13) {
+            if (gs.mines[toY][toX]) {
+                gs.deadPieces[movingPiece.color].push(movingPiece);
+                gs.pieces = gs.pieces.filter(p => p.id !== movingPiece.id);
+                
+                if (socket.color === 'white') gs.revealedWhite[toY][toX] = 'X';
+                if (socket.color === 'black') gs.revealedBlack[toY][toX] = 'X';
+                
+                socket.emit('explosion', { message: `Your ${pieceNames[movingPiece.type]} exploded!` });
+
+                if (movingPiece.type === 'K') {
+                    gs.winner = socket.color === 'white' ? 'black' : 'white';
+                    broadcastGameOver(code, gs.winner, `${socket.color}'s King exploded on a mine!`);
+                }
+
+            } else {
+                floodFill(gs, toX, toY, socket.color);
+            }
+        }
+
+        gs.turn = gs.turn === 'white' ? 'black' : 'white';
+        broadcastState(code);
+    });
+
+    socket.on('endGame', () => {
+        const code = socket.roomCode;
+        if (code && games[code]) {
+            resetGame(code);
+        }
+    });
+
+    socket.on('disconnect', () => {
+        const code = socket.roomCode;
+        if (code && games[code]) {
+            const gs = games[code];
+            if (socket.color === 'white') gs.players.white = null;
+            if (socket.color === 'black') gs.players.black = null;
+            
+            // clean up room if both players leave
+            if (!gs.players.white && !gs.players.black) {
+                if (gs.timerInterval) clearInterval(gs.timerInterval);
+                delete games[code];
+            } else {
+                broadcastState(code);
+            }
+        }
+    });
 });
 
-console.log('WebSocket server running on port ' + PORT);
+server.listen(PORT, () => {
+    console.log('Socket.io server running on port ' + PORT);
+});
