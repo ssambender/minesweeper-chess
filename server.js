@@ -1,12 +1,19 @@
+JavaScript
 const http = require('http');
 const { Server } = require('socket.io');
 
-const PORT = process.env.PORT || 8080;
-const server = http.createServer();
+const PORT = process.env.PORT || 8000; 
+
+const server = http.createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('Minesweeper Chess Server is running!');
+    }
+});
 
 const io = new Server(server, {
     cors: {
-        origin: "*", 
+        origin: "https://ssambender.github.io",
         methods: ["GET", "POST"],
         credentials: true
     }
